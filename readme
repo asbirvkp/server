@@ -1,8 +1,5 @@
-git add .
-git commit -m "-"
-git push
-
-
+complete server folder structure
+----------------------------------
 
 server/
 ├── config/
@@ -16,3 +13,11 @@ server/
 ├── package-lock.json        # Created after npm install
 ├── package.json            # Project dependencies
 └── server.js               # Main server file
+
+
+
+
+
+git add .
+git commit -m "-"
+git push
