@@ -1,0 +1,18 @@
+git add .
+git commit -m "-"
+git push
+
+
+
+server/
+├── config/
+│   └── credentials.json      # Google Sheets API credentials in config folder
+│
+├── node_modules/            # Created after npm install
+│
+├── .env                     # Environment variables file
+├── .gitignore              # Git ignore configurations
+├── credentials.json         # Google Sheets API credentials in root
+├── package-lock.json        # Created after npm install
+├── package.json            # Project dependencies
+└── server.js               # Main server file
