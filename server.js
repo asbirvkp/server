@@ -5,7 +5,7 @@ const { google } = require('googleapis');
 require('dotenv').config();
 
 const app = express();
-// -------------------------------------------------------
+
 // CORS configuration
 app.use(cors({
   origin: '*',  // Allow all origins for now

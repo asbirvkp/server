@@ -21,7 +21,6 @@ Thumbs.db
 
 # Google Sheets API credentials
 /config/credentials.json
-credentials.json
 
 # Temporary files
 *.tmp
@@ -48,3 +47,5 @@ coverage
 # Yarn Integrity file
 .yarn-integrity
 
+/config/credentials.json
+credentials.json
