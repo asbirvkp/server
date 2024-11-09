@@ -88,22 +88,24 @@ admin.initializeApp({
 
 // Add authentication middleware
 const authenticateToken = async (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    console.log('No token provided');
-    return res.status(401).json({ error: 'No token provided' });
-  }
-
   try {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+
     const decodedToken = await admin.auth().verifyIdToken(token);
-    req.user = decodedToken;
-    console.log('Token verified successfully:', decodedToken.uid);
+    req.user = {
+      email: decodedToken.email,
+      displayName: decodedToken.name || decodedToken.email.split('@')[0],
+      uid: decodedToken.uid
+    };
     next();
   } catch (error) {
-    console.error('Token verification error:', error);
-    return res.status(403).json({ error: 'Invalid token' });
+    console.error('Auth Error:', error);
+    res.status(403).json({ error: 'Invalid token' });
   }
 };
 
@@ -274,6 +276,40 @@ app.post('/api/login/google', async (req, res) => {
   } catch (error) {
     console.error('Google login error:', error);
     res.status(500).json({ error: 'Failed to authenticate with Google' });
+  }
+});
+
+// Add this after your existing endpoints
+app.get('/api/wallet-data', authenticateToken, async (req, res) => {
+  try {
+    const userEmail = req.user.email;
+    
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: 'User-Balance!A2:G',
+      valueRenderOption: 'UNFORMATTED_VALUE'
+    });
+
+    if (!response.data.values) {
+      return res.json({ 
+        userEmail,
+        balance: 0, 
+        earnings: 0 
+      });
+    }
+
+    const userData = response.data.values.find(row => row[1] === userEmail);
+    
+    const result = {
+      userEmail,
+      balance: parseFloat(userData?.[6] || 0),
+      earnings: parseFloat(userData?.[5] || 0)
+    };
+
+    res.json(result);
+  } catch (error) {
+    console.error('Wallet Data Error:', error);
+    res.status(500).json({ error: 'Failed to fetch wallet data' });
   }
 });
 
