@@ -277,42 +277,6 @@ app.post('/api/login/google', async (req, res) => {
   }
 });
 
-// Protected route example
-app.get('/api/dashboard', authenticateToken, async (req, res) => {
-  try {
-    // Your data fetching logic here
-    const data = await fetchDataFromDatabase();
-    res.json(data);
-  } catch (error) {
-    console.error('Dashboard data fetch error:', error);
-    res.status(500).json({ error: 'Failed to fetch dashboard data' });
-  }
-});
-
-app.get('/api/sheets/data', authenticateToken, async (req, res) => {
-  try {
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: 'Trade-History!B:E',
-      valueRenderOption: 'UNFORMATTED_VALUE'
-    });
-
-    if (!response.data.values) {
-      return res.json([]);
-    }
-
-    const data = response.data.values.map(row => ({
-      date: row[0],
-      pnl: parseFloat(row[3] || 0)
-    })).filter(item => item.date && !isNaN(item.pnl));
-
-    res.json(data);
-  } catch (error) {
-    console.error('Sheet Data Error:', error);
-    res.status(500).json({ error: 'Failed to fetch sheet data' });
-  }
-});
-
 // Add this error handling middleware at the end before app.listen
 app.use((err, req, res, next) => {
   console.error('Global error:', err);
