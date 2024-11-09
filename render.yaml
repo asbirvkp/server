@@ -1,0 +1,10 @@
+service:
+  name: realm-world-api
+  env: node
+  buildCommand: npm install
+  startCommand: node server.js
+  envVars:
+    - key: NODE_ENV
+      value: production
+    - key: PORT
+      value: 10000
