@@ -63,6 +63,9 @@ app.use((req, res, next) => {
 // Add this before your routes
 app.options('*', cors(corsOptions));
 
+// Add this after the imports, before app initialization
+const cache = new NodeCache({ stdTTL: 30 }); // 30 seconds default TTL
+
 // Initialize Firebase Admin
 const serviceAccount = {
   "type": "service_account",
@@ -131,50 +134,41 @@ app.get('/api/performance-data', authenticateToken, async (req, res) => {
       return res.json(cachedData);
     }
 
-    console.log('User requesting performance data:', req.user);
-    console.log('Fetching performance data...');
-    
-    const [thisWeekRes, lastWeekRes, monthlyRes, yearlyRes] = await Promise.all([
-      sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range: 'Trade-History!H1',
-        valueRenderOption: 'UNFORMATTED_VALUE'
-      }),
-      sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range: 'Trade-History!J1',
-        valueRenderOption: 'UNFORMATTED_VALUE'
-      }),
-      sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range: 'Trade-History!L1',
-        valueRenderOption: 'UNFORMATTED_VALUE'
-      }),
-      sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range: 'Trade-History!N1',
-        valueRenderOption: 'UNFORMATTED_VALUE'
-      })
-    ]);
+    if (!sheets) {
+      await initializeGoogleSheets();
+    }
 
-    console.log('Sheet responses received');
-    console.log('This week data:', thisWeekRes.data);
-    
+    const range = 'Trade-History!H1:N1';
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range,
+      valueRenderOption: 'UNFORMATTED_VALUE'
+    });
+
+    if (!response.data || !response.data.values || !response.data.values[0]) {
+      if (cachedData) {
+        return res.json(cachedData);
+      }
+      throw new Error('No data found in spreadsheet');
+    }
+
+    const values = response.data.values[0];
     const formattedResult = {
-      thisWeek: (parseFloat(thisWeekRes.data.values?.[0]?.[0]) || 0).toFixed(2),
-      lastWeek: (parseFloat(lastWeekRes.data.values?.[0]?.[0]) || 0).toFixed(2),
-      monthly: Math.round(parseFloat(monthlyRes.data.values?.[0]?.[0]) || 0),
-      yearly: Math.round(parseFloat(yearlyRes.data.values?.[0]?.[0]) || 0)
+      thisWeek: (parseFloat(values[0] || 0)).toFixed(2),
+      lastWeek: (parseFloat(values[2] || 0)).toFixed(2),
+      monthly: Math.round(parseFloat(values[4] || 0)),
+      yearly: Math.round(parseFloat(values[6] || 0))
     };
 
-    console.log('Formatted result:', formattedResult);
-
-    // Cache the result
-    cache.set('performance-data', formattedResult);
+    cache.set('performance-data', formattedResult, 30);
     res.json(formattedResult);
   } catch (error) {
     console.error('Performance Data Error:', error);
-    res.status(500).json({ error: 'Failed to fetch performance data', details: error.message });
+    const cachedData = cache.get('performance-data');
+    if (cachedData) {
+      return res.json(cachedData);
+    }
+    res.status(500).json({ error: error.message || 'Failed to fetch performance data' });
   }
 });
 
