@@ -9,10 +9,11 @@ require('dotenv').config();
 const app = express();
 
 // Add after imports
-if (!process.env.FIREBASE_PROJECT_ID || 
+if (!process.env.FIREBASE_CREDENTIALS || 
     !process.env.GOOGLE_CREDENTIALS || 
     !process.env.GOOGLE_SHEET_ID) {
-  console.error('Missing required environment variables');
+  console.error('Missing required environment variables. Please check your .env file.');
+  console.error('Required variables: FIREBASE_CREDENTIALS, GOOGLE_CREDENTIALS, GOOGLE_SHEET_ID');
   process.exit(1);
 }
 
@@ -66,25 +67,32 @@ app.options('*', cors(corsOptions));
 // Add this after the imports, before app initialization
 const cache = new NodeCache({ stdTTL: 30 }); // 30 seconds default TTL
 
-// Initialize Firebase Admin
-const serviceAccount = {
-  "type": "service_account",
-  "project_id": "realmworld-369",
-  "private_key_id": process.env.FIREBASE_PRIVATE_KEY_ID,
-  "private_key": process.env.FIREBASE_PRIVATE_KEY,
-  "client_email": process.env.FIREBASE_CLIENT_EMAIL,
-  "client_id": process.env.FIREBASE_CLIENT_ID,
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": process.env.FIREBASE_CLIENT_CERT_URL,
-  "universe_domain": "googleapis.com"
-};
+let sheets;
+let spreadsheetId;
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-  databaseURL: "https://realmworld-369-default-rtdb.firebaseio.com"
-});
+try {
+  // Initialize Google Sheets API
+  const auth = new google.auth.GoogleAuth({
+    credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
+    scopes: ['https://www.googleapis.com/auth/spreadsheets']
+  });
+
+  sheets = google.sheets({ version: 'v4', auth });
+  spreadsheetId = process.env.GOOGLE_SHEET_ID;
+
+  // Initialize Firebase Admin
+  if (!admin.apps.length) {
+    admin.initializeApp({
+      credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_CREDENTIALS))
+    });
+  }
+
+  console.log('Successfully initialized Google Sheets and Firebase');
+} catch (error) {
+  console.error('Initialization Error:', error);
+  console.error('Error details:', error.message);
+  process.exit(1);
+}
 
 // Add authentication middleware
 const authenticateToken = async (req, res, next) => {
@@ -109,14 +117,49 @@ const authenticateToken = async (req, res, next) => {
   }
 };
 
-// Initialize Google Sheets
-const auth = new google.auth.GoogleAuth({
-  credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
-  scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly']
-});
+async function updateUserBalanceSheet(userData) {
+  try {
+    console.log('Attempting to update sheet for user:', userData.email);
+    
+    // Get existing data
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: 'User-Balance!A2:G',
+      valueRenderOption: 'UNFORMATTED_VALUE'
+    });
 
-const sheets = google.sheets({ version: 'v4', auth });
-const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+    const existingData = response.data.values || [];
+    const userIndex = existingData.findIndex(row => row[1] === userData.email);
+
+    const newRow = [
+      userData.displayName || '',
+      userData.email,
+      userData.phoneNumber || '',
+      0, // Initial deposit
+      0, // Initial PNL%
+      0, // Initial Total Earnings
+      0  // Initial Balance
+    ];
+
+    if (userIndex === -1) {
+      // Add new user
+      const appendResponse = await sheets.spreadsheets.values.append({
+        spreadsheetId,
+        range: 'User-Balance!A2:G',
+        valueInputOption: 'USER_ENTERED',
+        insertDataOption: 'INSERT_ROWS',
+        resource: {
+          values: [newRow]
+        }
+      });
+      
+      console.log('Sheet update response:', appendResponse.data);
+    }
+  } catch (error) {
+    console.error('Error updating sheet:', error);
+    throw new Error(`Failed to update sheet: ${error.message}`);
+  }
+}
 
 // Test endpoint
 app.get('/', (req, res) => {
@@ -267,7 +310,13 @@ app.post('/api/login/google', async (req, res) => {
 
     // Verify the Google ID token
     const decodedToken = await admin.auth().verifyIdToken(idToken);
-    console.log('Decoded token:', decodedToken);
+    
+    // Update user data in Google Sheet
+    await updateUserBalanceSheet({
+      displayName: decodedToken.name,
+      email: decodedToken.email,
+      phoneNumber: decodedToken.phone_number
+    });
 
     // Create a custom token for the client
     const customToken = await admin.auth().createCustomToken(decodedToken.uid);
@@ -313,6 +362,41 @@ app.get('/api/wallet-data', authenticateToken, async (req, res) => {
   }
 });
 
+// Add this new endpoint for email/password signup
+app.post('/api/signup', authenticateToken, async (req, res) => {
+  try {
+    const { email, displayName, phoneNumber } = req.body;
+    
+    // Verify the token matches the user data
+    if (req.user.email !== email) {
+      return res.status(403).json({
+        success: false,
+        message: 'Token email does not match provided email'
+      });
+    }
+
+    // Add user to Google Sheet
+    await updateUserBalanceSheet({
+      email,
+      displayName,
+      phoneNumber,
+      uid: req.user.uid
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'User created successfully'
+    });
+  } catch (error) {
+    console.error('Signup error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      details: error.message
+    });
+  }
+});
+
 // Add this error handling middleware at the end before app.listen
 app.use((err, req, res, next) => {
   console.error('Global error:', err);
@@ -325,6 +409,17 @@ app.use((err, req, res, next) => {
       status: err.status || 500
     });
   }
+});
+
+// Add this after your routes
+app.use((err, req, res, next) => {
+  console.error('Error:', err);
+  res.status(err.status || 500).json({
+    error: process.env.NODE_ENV === 'production' 
+      ? 'Internal server error' 
+      : err.message,
+    details: process.env.NODE_ENV === 'development' ? err.stack : undefined
+  });
 });
 
 const PORT = process.env.PORT || 3001;
